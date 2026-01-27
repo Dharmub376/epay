@@ -1,0 +1,57 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "mysql"
+    url      = env("DATABASE_URL")
+}
+
+model User {
+    id                 String              @id @default(cuid())
+    email              String              @unique
+    name               String
+    phone              String
+    password           String
+    isVerified         Boolean             @default(false)
+    createdAt          DateTime            @default(now())
+    updatedAt          DateTime            @updatedAt
+    verificationTokens VerificationToken[]
+    orders             Order[]
+
+    @@index([email])
+}
+
+model VerificationToken {
+    id        String   @id @default(cuid())
+    email     String
+    code      String
+    expiresAt DateTime
+    userId    String?
+    user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+    createdAt DateTime @default(now())
+
+    @@index([email])
+    @@index([userId])
+}
+
+model Order {
+    id              String   @id @default(cuid())
+    userId          String
+    user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    productName     String
+    productPrice    Int
+    quantity        Int      @default(1)
+    deliveryName    String
+    deliveryPhone   String
+    deliveryEmail   String
+    deliveryAddress String
+    status          String   @default("pending")
+    createdAt       DateTime @default(now())
+    updatedAt       DateTime @updatedAt
+
+    @@index([userId])
+}
