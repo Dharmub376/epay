@@ -37,7 +37,7 @@ export default function DeliveryPage() {
         setError("");
     };
 
-    const handlePlaceOrder = async (e: React.FormEvent) => {
+    const handleProceedToCheckout = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError("");
@@ -49,13 +49,14 @@ export default function DeliveryPage() {
         }
 
         try {
-            // Here you would normally place the order
-            setSuccess("Order placed successfully!");
+            // Save delivery details to localStorage
+            localStorage.setItem("deliveryDetails", JSON.stringify(formData));
+            setSuccess("Delivery details saved!");
             setTimeout(() => {
-                router.push("/");
-            }, 2000);
+                router.push("/checkout/payment-options");
+            }, 500);
         } catch (err) {
-            setError("Failed to place order");
+            setError("Failed to save delivery details");
         } finally {
             setLoading(false);
         }
@@ -106,7 +107,7 @@ export default function DeliveryPage() {
                         </div>
                     )}
 
-                    <form onSubmit={handlePlaceOrder} className="space-y-4">
+                    <form onSubmit={handleProceedToCheckout} className="space-y-4">
                         <div>
                             <Label htmlFor="fullName">Full Name</Label>
                             <Input
@@ -155,7 +156,7 @@ export default function DeliveryPage() {
                             disabled={loading}
                             className="w-full rounded-lg border-2 border-red-600 bg-red-600 px-4 py-3 text-sm font-semibold uppercase tracking-wide text-white transition hover:-translate-y-0.5 hover:bg-red-700 hover:shadow-md hover:shadow-red-200 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {loading ? "Placing order..." : "Place Order"}
+                            {loading ? "Saving..." : "Proceed to Checkout"}
                         </button>
                     </form>
                 </CardContent>
