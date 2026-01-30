@@ -8,6 +8,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { v4 as uuidv4 } from "uuid";
+
+declare global {
+    interface Window {
+        KhaltiCheckout: any;
+    }
+}
 
 interface PaymentOption {
     id: string;
@@ -15,14 +22,16 @@ interface PaymentOption {
     description: string;
     image?: string;
     emoji?: string;
+    disabled?: boolean;
 }
 
 const PAYMENT_OPTIONS: PaymentOption[] = [
     {
         id: "visa",
         name: "Credit / Debit Card",
-        description: "Visa, Mastercard, American Express",
+        description: "Coming soon - Currently unavailable",
         emoji: "💳",
+        disabled: true,
     },
     {
         id: "khalti",
@@ -76,83 +85,118 @@ export default function PaymentOptionsPage() {
         }
     }, [router]);
 
-    const initiateKhaltiPayment = () => {
-        interface KhaltiPayload {
-            token: string;
-            amount: number;
-        }
-
-        const config = {
-            publicKey: "test_public_key_dc74e0fd57cb46cd93832aee0a507256", // Replace with your Khalti public key
-            productIdentity: "harpic-500ml",
-            productName: "Harpic",
-            productUrl: typeof window !== "undefined" ? window.location.origin : "http://localhost:3000",
-            paymentPreference: ["KHALTI"],
-            eventHandler: {
-                onSuccess(payload: KhaltiPayload) {
-                    console.log("Khalti payment success:", payload);
-                    // Verify payment on backend
-                    fetch("/api/auth/payment", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            paymentMethod: "khalti",
-                            token: payload.token,
-                            amount: payload.amount,
-                        }),
-                    }).then(() => {
-                        router.push("/checkout/success");
-                    }).catch(() => {
-                        setError("Failed to verify payment");
-                        setLoading(false);
-                    });
-                },
-                onError(error: Error) {
-                    console.error("Khalti payment error:", error);
-                    setError("Payment failed. Please try again.");
-                    setLoading(false);
-                },
-                onClose() {
-                    console.log("Khalti widget closed");
-                    setLoading(false);
-                },
-            },
-        };
-
-        // @ts-expect-error - Khalti SDK loaded via script
-        const checkout = new window.KhaltiCheckout(config);
-        checkout.show({ amount: 12000 }); // Amount in paisa (120 NPR = 12000 paisa)
-    };
-
-    const initiateEsewaPayment = () => {
+    const initiateKhaltiPayment = async () => {
         try {
-            const path = "https://uat.esewa.com.np/epay/main";
-            const params = {
-                amt: "120",
-                psc: "0",
-                pdc: "0",
-                txAmt: "0",
-                tAmt: "120",
-                pid: `HARPIC-${Date.now()}`,
-                scd: "EPAYTEST", // Replace with your eSewa merchant code
-                su: `${window.location.origin}/checkout/success`,
-                fu: `${window.location.origin}/checkout/payment-options`,
-            };
+            const transactionId = uuidv4();
 
-            const form = document.createElement("form");
-            form.setAttribute("method", "POST");
-            form.setAttribute("action", path);
-
-            Object.entries(params).forEach(([key, value]) => {
-                const hiddenField = document.createElement("input");
-                hiddenField.setAttribute("type", "hidden");
-                hiddenField.setAttribute("name", key);
-                hiddenField.setAttribute("value", value);
-                form.appendChild(hiddenField);
+            // Get initialization data from backend
+            const response = await fetch("/api/checkout-session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    method: "khalti",
+                    amount: 120,
+                    productName: "Harpic",
+                    transactionId,
+                }),
             });
 
-            document.body.appendChild(form);
-            form.submit();
+            const data = await response.json();
+
+            if (data.status !== "success") {
+                setError("Failed to initiate Khalti payment");
+                setLoading(false);
+                return;
+            }
+
+            // Initialize Khalti Checkout
+            if (typeof window !== "undefined") {
+                const config = {
+                    publicKey: data.publicKey || process.env.NEXT_PUBLIC_KHALTI_PUBLIC_KEY,
+                    productIdentity: "harpic-500ml",
+                    productName: "Harpic",
+                    productUrl: window.location.origin,
+                    paymentPreference: ["KHALTI", "EBANKING", "MOBILE_BANKING", "CONNECT_IPS", "SCT"],
+                    amount: 12000, // Amount in paisa (120 NPR)
+                    eventHandler: {
+                        onSuccess(payload: any) {
+                            console.log("Khalti payment success:", payload);
+
+                            localStorage.setItem("paymentInfo", JSON.stringify({
+                                method: "khalti",
+                                pidx: payload.pidx,
+                                amount: 120,
+                                status: "success",
+                            }));
+
+                            // Redirect to success page with verification
+                            router.push(`/checkout/success?payment=khalti&verified=true&pidx=${payload.pidx}`);
+                        },
+                        onError(error: any) {
+                            console.error("Khalti payment error:", error);
+                            setError(error.message || "Payment failed. Please try again.");
+                            setLoading(false);
+                        },
+                        onClose() {
+                            console.log("Khalti widget closed");
+                            setLoading(false);
+                        },
+                    },
+                };
+
+                try {
+                    const checkout = new window.KhaltiCheckout(config);
+                    checkout.show({ amount: 12000 });
+                } catch (error) {
+                    console.error("Khalti checkout initialization error:", error);
+                    setError("Khalti payment gateway initialization failed");
+                    setLoading(false);
+                }
+            }
+        } catch (error) {
+            console.error("Khalti payment error:", error);
+            setError("Failed to initiate Khalti payment. Please try again.");
+            setLoading(false);
+        }
+    };
+
+    const initiateEsewaPayment = async () => {
+        try {
+            const transactionId = uuidv4();
+
+            const response = await fetch("/api/checkout-session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    method: "esewa",
+                    amount: 120,
+                    productName: "Harpic",
+                    transactionId,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (data.status === "success" && data.esewaConfig) {
+                // Create form and submit to eSewa
+                const form = document.createElement("form");
+                form.setAttribute("method", "POST");
+                form.setAttribute("action", data.paymentUrl);
+
+                Object.entries(data.esewaConfig).forEach(([key, value]) => {
+                    const input = document.createElement("input");
+                    input.type = "hidden";
+                    input.name = key;
+                    input.value = String(value);
+                    form.appendChild(input);
+                });
+
+                document.body.appendChild(form);
+                form.submit();
+            } else {
+                setError("Failed to initiate eSewa payment");
+                setLoading(false);
+            }
         } catch (error) {
             console.error("eSewa payment error:", error);
             setError("Failed to initiate eSewa payment. Please try again.");
@@ -166,13 +210,16 @@ export default function PaymentOptionsPage() {
             return;
         }
 
+        if (selectedPayment === "visa") {
+            setError("Credit/Debit card payment is currently unavailable");
+            return;
+        }
+
         setLoading(true);
         setError("");
 
         try {
-            if (selectedPayment === "visa") {
-                router.push("/checkout/payment");
-            } else if (selectedPayment === "khalti") {
+            if (selectedPayment === "khalti") {
                 initiateKhaltiPayment();
             } else if (selectedPayment === "esewa") {
                 initiateEsewaPayment();
@@ -186,11 +233,23 @@ export default function PaymentOptionsPage() {
 
     useEffect(() => {
         // Load Khalti SDK
-        if (typeof window !== "undefined" && !document.getElementById("khalti-sdk")) {
+        if (typeof window !== "undefined" && !document.getElementById("khalti-script")) {
             const script = document.createElement("script");
-            script.id = "khalti-sdk";
+            script.id = "khalti-script";
             script.src = "https://khalti.s3.ap-south-1.amazonaws.com/KPG/dist/2020.12.17.0.0.0/khalti-checkout.iffe.js";
+            script.async = true;
             document.body.appendChild(script);
+        }
+    }, []);
+
+    useEffect(() => {
+        // Check for payment failure in URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const paymentStatus = urlParams.get("payment");
+        const errorParam = urlParams.get("error");
+
+        if (paymentStatus === "failed" || errorParam) {
+            setError("Payment was cancelled or failed. Please try again.");
         }
     }, []);
 
@@ -239,15 +298,23 @@ export default function PaymentOptionsPage() {
                             {PAYMENT_OPTIONS.map((option) => (
                                 <div
                                     key={option.id}
-                                    onClick={() => setSelectedPayment(option.id)}
+                                    onClick={() => !option.disabled && setSelectedPayment(option.id)}
                                     className={cn(
-                                        "flex items-start gap-3 rounded-lg border-2 p-4 cursor-pointer transition-all hover:border-red-300 hover:bg-red-50/50",
-                                        selectedPayment === option.id
+                                        "flex items-start gap-3 rounded-lg border-2 p-4 transition-all",
+                                        option.disabled
+                                            ? "cursor-not-allowed opacity-50 bg-zinc-50"
+                                            : "cursor-pointer hover:border-red-300 hover:bg-red-50/50",
+                                        selectedPayment === option.id && !option.disabled
                                             ? "border-red-500 bg-red-50"
                                             : "border-zinc-200 bg-white"
                                     )}
                                 >
-                                    <RadioGroupItem value={option.id} id={option.id} className="mt-0.5" />
+                                    <RadioGroupItem
+                                        value={option.id}
+                                        id={option.id}
+                                        className="mt-0.5"
+                                        disabled={option.disabled}
+                                    />
                                     <div className="flex-1">
                                         <div className="flex items-center gap-2">
                                             {option.image ? (
@@ -265,10 +332,18 @@ export default function PaymentOptionsPage() {
                                             )}
                                             <Label
                                                 htmlFor={option.id}
-                                                className="cursor-pointer font-semibold text-zinc-900"
+                                                className={cn(
+                                                    "font-semibold text-zinc-900",
+                                                    option.disabled ? "cursor-not-allowed" : "cursor-pointer"
+                                                )}
                                             >
                                                 {option.name}
                                             </Label>
+                                            {option.disabled && (
+                                                <span className="ml-auto text-xs text-zinc-500 font-medium px-2 py-1 bg-zinc-100 rounded">
+                                                    Disabled
+                                                </span>
+                                            )}
                                         </div>
                                         <p className="mt-1 text-xs text-zinc-600">{option.description}</p>
                                     </div>
